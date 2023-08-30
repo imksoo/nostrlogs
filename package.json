@@ -12,6 +12,9 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "nostr-fetch": "^0.12.2",
+    "nostr-relaypool": "^0.6.28",
+    "nostr-tools": "1.13.1",
     "vue": "^3.3.4"
   },
   "devDependencies": {

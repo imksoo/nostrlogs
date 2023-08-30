@@ -12,5 +12,15 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        '': 'nostrlogs.html'
+      },
+      output: {
+        entryFileNames: `assets/nostrlogs.js`,
+      }
+    }
   }
 })
