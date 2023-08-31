@@ -3,6 +3,7 @@ import { ref, type Ref } from "vue";
 import * as Nostr from "nostr-tools";
 import { RelayPool } from "nostr-relaypool";
 import { NostrFetcher } from "nostr-fetch";
+import { AccordionList, AccordionItem } from "vue3-rich-accordion";
 
 let logMessages = ref("");
 
@@ -41,8 +42,6 @@ function normalizeUrls(urls: string[]): string[] {
   return urls.map((url) => Nostr.utils.normalizeURL(url));
 }
 
-let collectUserRelaysTimeout = 0;
-
 function main() {
   let pk = "";
   if (pubkey.value.startsWith("n")) {
@@ -68,6 +67,7 @@ function main() {
 
 async function collectUserRelays(pubkey: string): Promise<void> {
   console.log(`ユーザーが利用しているリレーリストの取得を開始します`);
+
   const pool = new RelayPool(normalizeUrls(initRelays), {
     autoReconnect: true,
     logErrorsAndNotices: true,
@@ -75,7 +75,8 @@ async function collectUserRelays(pubkey: string): Promise<void> {
     useEventCache: true,
   });
 
-  collectUserRelaysTimeout = setTimeout(() => {
+  let collectUserRelaysTimeout = setTimeout(() => {
+    console.log(`リレーリストが見つかりませんでした`);
     collectUserEventsRange(pubkey);
   }, 3000);
   pool.subscribe(
@@ -96,8 +97,8 @@ async function collectUserRelays(pubkey: string): Promise<void> {
           userRelays.push(r);
         }
 
-        console.log(`${relayURL} から ${new Date(ev.created_at * 1000).toLocaleString()} 時点のリレーリストを受信しました。`);
-        console.log(JSON.stringify(userRelays, undefined, 2));
+        console.log(`${relayURL} から ${new Date(ev.created_at * 1000).toLocaleString()} 時点のリレーリストを受信しました`);
+        console.log(JSON.stringify(userRelays));
       } else if (ev.kind === 10002 && userRelaysCreatedAt < ev.created_at) {
         userRelays.slice(0);
         userRelaysCreatedAt = ev.created_at;
@@ -111,6 +112,7 @@ async function collectUserRelays(pubkey: string): Promise<void> {
       }
       clearTimeout(collectUserRelaysTimeout);
       collectUserRelaysTimeout = setTimeout(() => {
+        console.log(`リレーリストの取得が完了しました`);
         collectUserEventsRange(pubkey);
       }, 3000);
     },
@@ -121,10 +123,13 @@ async function collectUserRelays(pubkey: string): Promise<void> {
 }
 
 async function collectUserEventsRange(pubkey: string, relays: string[] = userRelays) {
-  console.log(`リレーリストの取得が完了しました`);
+  const findRelays = [...new Set(normalizeUrls([...relays, ...initRelays]))];
 
+  console.log(`以下のリレーから投稿を探索します`);
+  console.log(JSON.stringify(findRelays));
+  console.log(JSON.stringify({ since: Math.floor(since.value.getTime() / 1000), until: Math.floor(until.value.getTime() / 1000) }));
   const fetcher = NostrFetcher.init();
-  const eventsIter = fetcher.allEventsIterator([...new Set(normalizeUrls(relays))], { authors: [pubkey] }, {}, { enableBackpressure: true });
+  const eventsIter = fetcher.allEventsIterator(findRelays, { authors: [pubkey] }, { since: Math.floor(since.value.getTime() / 1000), until: Math.floor(until.value.getTime() / 1000) }, { enableBackpressure: true });
 
   for await (const ev of eventsIter) {
     addEvent(ev);
@@ -263,7 +268,7 @@ async function publishEvent(ev: Nostr.Event) {
   promises.push(responseReceived);
 }
 async function publishEventsInMap(map: any) {
-  for (let [_, value] of map) {
+  for (let value of map.values()) {
     if (value instanceof Map) {
       await publishEventsInMap(value);
     } else if (value instanceof Array) {
@@ -273,15 +278,39 @@ async function publishEventsInMap(map: any) {
     }
   }
 }
+
+const since = ref(new Date(new Date().getTime() - 7 * 24 * 60 * 60 * 1000));
+const until = ref(new Date(new Date().getTime()));
+function dateFormat(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
 </script>
 
 <template>
   <h1>nostrlogs</h1>
   <form>
     <fieldset>
-      <label for="pubkey">Nostr 公開鍵 (HEX形式またはnpub形式)</label>:
+      <label for="pubkey">Nostr 公開鍵 (HEX形式またはnpub形式)</label>:<br />
       <input type="text" id="pubkey" title="Public key string (in HEX/npub)" size="96" v-model="pubkey" />
       <input type="button" value="取得" @click="main()" />
+
+      <br />
+      <label for="since">since</label>:
+      <VueDatePicker placeholder="ここをクリックして日時を入力" v-model="since" :format="dateFormat(since)" locale="jp">
+        <template #year="{ year }"> {{ year }}年 </template>
+      </VueDatePicker>
+      <br />
+      <label for="until">until</label>:
+      <VueDatePicker placeholder="ここをクリックして日時を入力" v-model="until" :format="dateFormat(until)" locale="jp">
+        <template #year="{ year }"> {{ year }}年 </template>
+      </VueDatePicker>
     </fieldset>
     <fieldset>
       <label for="destRelay">過去ログの同期先リレーサーバー (wss://形式)</label>:
@@ -293,19 +322,28 @@ async function publishEventsInMap(map: any) {
   <hr />
   <div>
     取得済みイベント数 = {{ countNestedElements(events) }} ackedEvents = {{ ackedEvents }} duplicatedEvents = {{ duplicatedEvents }} nonDuplicatedEvents = {{ nonDuplicatedEvents }}
-    <div v-for="(yearData, year) in mapToObj(events)" :key="'year-' + year">
-      <div v-for="(monthData, month) in yearData" :key="'month-' + month">
-        <div v-for="(dateData, date) in monthData" :key="'date-' + date">
-          <h2>{{ year }}/{{ parseInt("" + month) + 1 }}/{{ date }}</h2>
-          <ul>
-            <li v-for="(e, index) in dateData" :key="'event-' + index">
-              {{ new Date(e.created_at * 1000).toLocaleTimeString() }} kind:{{ e.kind }}<br />
-              <pre>{{ e.content }}</pre>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
+
+    <AccordionList v-for="(yearData, year) in mapToObj(events)" :key="'year-' + year" :open-multiple-items="true">
+      <AccordionItem default-opened>
+        <template #summary>{{ year }}</template>
+        <AccordionList v-for="(monthData, month) in yearData" :key="'month-' + month" :open-multiple-items="true">
+          <AccordionItem default-opened>
+            <template #summary>{{ year }}/{{ parseInt("" + month) + 1 }}</template>
+            <AccordionList :open-multiple-items="true">
+              <AccordionItem v-for="(dateData, date) in monthData" :key="'date-' + date">
+                <template #summary>{{ year }}/{{ parseInt("" + month) + 1 }}/{{ date }}</template>
+                <ul>
+                  <li v-for="(e, index) in dateData" :key="'event-' + index">
+                    {{ new Date(e.created_at * 1000).toLocaleTimeString() }} kind:{{ e.kind }}<br />
+                    <pre>{{ e.content }}</pre>
+                  </li>
+                </ul>
+              </AccordionItem>
+            </AccordionList>
+          </AccordionItem>
+        </AccordionList>
+      </AccordionItem>
+    </AccordionList>
   </div>
   <datalist id="relayList">
     <option value="wss://nos.lol/"></option>
@@ -334,4 +372,21 @@ async function publishEventsInMap(map: any) {
   <pre>{{ logMessages }}</pre>
 </template>
 
-<style scoped></style>
+<style scoped>
+pre {
+  white-space: pre-wrap;
+}
+
+input[type="text"] {
+  width: 80%;
+  padding: 6px;
+}
+
+input[type="button"] {
+  padding: 4px;
+}
+
+:root {
+  font-family: "IBM Plex Mono", "Yusei Magic", monospace;
+}
+</style>

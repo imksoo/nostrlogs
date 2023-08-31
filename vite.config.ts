@@ -13,13 +13,16 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  server: {
+    open: '/nostrlogs.html',
+  },
   build: {
     rollupOptions: {
       input: {
-        '': 'nostrlogs.html'
+        '': 'nostrlogs.html',
       },
       output: {
-        entryFileNames: `assets/nostrlogs.js`,
+        entryFileNames: `assets/nostrlogs-[hash].js`,
       }
     }
   }
