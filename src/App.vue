@@ -5,6 +5,8 @@ import { RelayPool } from "nostr-relaypool";
 import { NostrFetcher } from "nostr-fetch";
 import { AccordionList, AccordionItem } from "vue3-rich-accordion";
 
+import NostrEvent from "./components/NostrEvent.vue";
+
 let logMessages = ref("");
 
 const original_console_log = console.log;
@@ -36,7 +38,6 @@ const initRelays = [
 ];
 
 let userRelays: string[] = [];
-let userRelaysCreatedAt = 0;
 
 function normalizeUrls(urls: string[]): string[] {
   return urls.map((url) => Nostr.utils.normalizeURL(url));
@@ -84,14 +85,11 @@ async function collectUserRelays(pubkey: string): Promise<void> {
       {
         kinds: [3, 10002],
         authors: [pubkey],
-        limit: 1,
       },
     ],
     [...new Set(normalizeUrls([...initRelays]))],
     (ev, _isAfterEose, relayURL) => {
-      if (ev.kind === 3 && ev.content && userRelaysCreatedAt < ev.created_at) {
-        userRelays.slice(0);
-        userRelaysCreatedAt = ev.created_at;
+      if (ev.kind === 3 && ev.content) {
         const content = JSON.parse(ev.content);
         for (const r in content) {
           userRelays.push(r);
@@ -99,9 +97,7 @@ async function collectUserRelays(pubkey: string): Promise<void> {
 
         console.log(`${relayURL} から ${new Date(ev.created_at * 1000).toLocaleString()} 時点のリレーリストを受信しました`);
         console.log(JSON.stringify(userRelays));
-      } else if (ev.kind === 10002 && userRelaysCreatedAt < ev.created_at) {
-        userRelays.slice(0);
-        userRelaysCreatedAt = ev.created_at;
+      } else if (ev.kind === 10002) {
         for (let i = 0; i < ev.tags.length; ++i) {
           const t = ev.tags[i];
           if (t[0] === "r") {
@@ -332,12 +328,9 @@ function dateFormat(date: Date) {
             <AccordionList :open-multiple-items="true">
               <AccordionItem v-for="(dateData, date) in monthData" :key="'date-' + date">
                 <template #summary>{{ year }}/{{ parseInt("" + month) + 1 }}/{{ date }}</template>
-                <ul>
-                  <li v-for="(e, index) in dateData" :key="'event-' + index">
-                    {{ new Date(e.created_at * 1000).toLocaleTimeString() }} kind:{{ e.kind }}<br />
-                    <pre>{{ e.content }}</pre>
-                  </li>
-                </ul>
+                <div class="event" v-for="(e, index) in dateData" :key="'event-' + index">
+                  <NostrEvent :event="e"></NostrEvent>
+                </div>
               </AccordionItem>
             </AccordionList>
           </AccordionItem>
@@ -380,6 +373,7 @@ pre {
 input[type="text"] {
   width: 80%;
   padding: 6px;
+  font-size: 1.1em;
 }
 
 input[type="button"] {
