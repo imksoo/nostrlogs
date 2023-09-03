@@ -7,7 +7,8 @@ import { AccordionList, AccordionItem } from "vue3-rich-accordion";
 
 import NostrEvent from "./components/NostrEvent.vue";
 
-let logMessages = ref("");
+const mainMessage = ref("");
+const logMessages = ref("");
 
 const original_console_log = console.log;
 console.log = (...args) => {
@@ -45,7 +46,7 @@ function normalizeUrls(urls: string[]): string[] {
 
 function main() {
   let pk = "";
-  if (pubkey.value.startsWith("n")) {
+  if (pubkey.value.startsWith("np")) {
     try {
       const d = Nostr.nip19.decode(pubkey.value);
       switch (d.type) {
@@ -63,7 +64,26 @@ function main() {
     pk = pubkey.value;
   }
 
+  events.value = new Map();
+  collectButtonStatus.value = true;
   collectUserRelays(pk);
+}
+
+async function collectUserProfiles(pubkey: string): Promise<void> {
+  console.log(`ユーザーのプロフィール情報取得を開始します`);
+
+  const findRelays = [...new Set(normalizeUrls([...initRelays]))];
+
+  const fetcher = NostrFetcher.init();
+  const eventsIter = fetcher.allEventsIterator(findRelays, { kinds: [0], authors: [pubkey] }, {}, { enableBackpressure: true });
+
+  for await (const ev of eventsIter) {
+    console.log(JSON.stringify(ev, undefined, 2));
+  }
+
+  await Promise.all(promises);
+  fetcher.shutdown();
+  console.log(`ユーザーのプロフィール情報取得が完了しました`);
 }
 
 async function collectUserRelays(pubkey: string): Promise<void> {
@@ -96,7 +116,7 @@ async function collectUserRelays(pubkey: string): Promise<void> {
         }
 
         console.log(`${relayURL} から ${new Date(ev.created_at * 1000).toLocaleString()} 時点のリレーリストを受信しました`);
-        console.log(JSON.stringify(userRelays));
+        console.log(JSON.stringify(userRelays, undefined, 2));
       } else if (ev.kind === 10002) {
         for (let i = 0; i < ev.tags.length; ++i) {
           const t = ev.tags[i];
@@ -122,7 +142,7 @@ async function collectUserEventsRange(pubkey: string, relays: string[] = userRel
   const findRelays = [...new Set(normalizeUrls([...relays, ...initRelays]))];
 
   console.log(`以下のリレーから投稿を探索します`);
-  console.log(JSON.stringify(findRelays));
+  console.log(JSON.stringify(findRelays, undefined, 2));
   console.log(JSON.stringify({ since: Math.floor(since.value.getTime() / 1000), until: Math.floor(until.value.getTime() / 1000) }));
   const fetcher = NostrFetcher.init();
   const eventsIter = fetcher.allEventsIterator(findRelays, { authors: [pubkey] }, { since: Math.floor(since.value.getTime() / 1000), until: Math.floor(until.value.getTime() / 1000) }, { enableBackpressure: true });
@@ -137,6 +157,8 @@ async function collectUserEventsRange(pubkey: string, relays: string[] = userRel
   await Promise.all(promises);
   fetcher.shutdown();
   console.log(`全投稿の取得が完了しました`);
+  mainMessage.value = `全投稿の取得が完了しました`;
+  collectButtonStatus.value = false;
 }
 
 const events: Ref<Map<number, Map<number, Map<number, Nostr.Event[]>>>> = ref(new Map());
@@ -189,6 +211,7 @@ function countNestedElements(map: any): number {
 
 let destRelayUrl = ref("");
 let dstSocket: WebSocket;
+let collectButtonStatus = ref(false);
 let syncStatus = false;
 let syncButtonStatus = ref(false);
 let syncButtonTitle = ref("同期開始");
@@ -291,11 +314,15 @@ function dateFormat(date: Date) {
 
 <template>
   <h1>nostrlogs</h1>
+  <p>
+    複数のNostrリレーから全投稿を収集して日付ごとに表示するtwilog的なものです。<br />
+    合わせて取得した過去ログを指定された同期先リレーサーバーに書き込んでバックアップ出来ます。
+  </p>
   <form>
     <fieldset>
       <label for="pubkey">Nostr 公開鍵 (HEX形式またはnpub形式)</label>:<br />
       <input type="text" id="pubkey" title="Public key string (in HEX/npub)" size="96" v-model="pubkey" />
-      <input type="button" value="取得" @click="main()" />
+      <input type="button" value="取得" @click="main()" :disabled="!pubkey || collectButtonStatus" />
 
       <br />
       <label for="since">since</label>:
@@ -317,7 +344,20 @@ function dateFormat(date: Date) {
   </form>
   <hr />
   <div>
-    取得済みイベント数 = {{ countNestedElements(events) }} ackedEvents = {{ ackedEvents }} duplicatedEvents = {{ duplicatedEvents }} nonDuplicatedEvents = {{ nonDuplicatedEvents }}
+    <div>
+      <u>{{ mainMessage }}</u>
+    </div>
+    <div>
+      □ 取得状態：<br />
+      ・収集イベント数 = {{ countNestedElements(events) }}
+    </div>
+    <div>
+      □ 同期状態：<br />
+      ・完了イベント数 = {{ ackedEvents }}<br />
+      ・既存同期済み数 = {{ duplicatedEvents }}<br />
+      ・書き込みイベント数 = {{ nonDuplicatedEvents }}<br />
+    </div>
+    <input type="button" value="すべてのイベントを開閉する" onclick="Array.from(document.getElementsByClassName('accordion-item__summary-icon')).forEach((e)=>{e.click()})" />
 
     <AccordionList v-for="(yearData, year) in mapToObj(events)" :key="'year-' + year" :open-multiple-items="true">
       <AccordionItem default-opened>
@@ -326,7 +366,7 @@ function dateFormat(date: Date) {
           <AccordionItem default-opened>
             <template #summary>{{ year }}/{{ parseInt("" + month) + 1 }}</template>
             <AccordionList :open-multiple-items="true">
-              <AccordionItem v-for="(dateData, date) in monthData" :key="'date-' + date">
+              <AccordionItem default-opened v-for="(dateData, date) in monthData" :key="'date-' + date">
                 <template #summary>{{ year }}/{{ parseInt("" + month) + 1 }}/{{ date }}</template>
                 <div class="event" v-for="(e, index) in dateData" :key="'event-' + index">
                   <NostrEvent :event="e"></NostrEvent>
@@ -366,21 +406,24 @@ function dateFormat(date: Date) {
 </template>
 
 <style scoped>
+:root {
+  font-family: "Noto Sans JP", "Sans Serif", monospace;
+}
+
 pre {
   white-space: pre-wrap;
 }
 
+input {
+  font-size: 1.1em;
+  padding: 0.4em;
+}
+
 input[type="text"] {
   width: 80%;
-  padding: 6px;
-  font-size: 1.1em;
 }
 
 input[type="button"] {
   padding: 4px;
-}
-
-:root {
-  font-family: "IBM Plex Mono", "Yusei Magic", monospace;
 }
 </style>

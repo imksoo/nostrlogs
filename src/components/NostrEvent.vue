@@ -23,8 +23,11 @@ switch (props.event.kind) {
   case 7:
     showTags.value = true;
     break;
-  default:
+  case 3:
     showTags.value = false;
+    break;
+  default:
+    showTags.value = true;
     break;
 }
 
